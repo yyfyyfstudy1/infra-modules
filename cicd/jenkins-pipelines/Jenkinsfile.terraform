@@ -1,0 +1,211 @@
+// Jenkins Pipeline - Terraform 跨账号部署
+// 用途：部署 Terraform 基础设施到 dev/test/prod 环境
+
+pipeline {
+  agent any
+  
+  options {
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+    disableConcurrentBuilds()
+  }
+  
+  parameters {
+    choice(
+      name: 'ENV',
+      choices: ['dev', 'test', 'prod'],
+      description: '选择部署环境'
+    )
+    choice(
+      name: 'ACTION',
+      choices: ['plan', 'apply', 'destroy'],
+      description: '选择 Terraform 操作'
+    )
+    booleanParam(
+      name: 'AUTO_APPROVE',
+      defaultValue: false,
+      description: '自动批准（仅用于 dev/test，prod 必须手动批准）'
+    )
+  }
+  
+  environment {
+    AWS_REGION       = 'ap-southeast-2'
+    PROJECT_NAME     = 'chime-mvp'
+    
+    // 跨账号角色 ARN（从 Jenkins 凭证获取或直接配置）
+    ROLE_DEV         = credentials('aws-role-dev')
+    ROLE_TEST        = credentials('aws-role-test')
+    ROLE_PROD        = credentials('aws-role-prod')
+    
+    // Terraform 工作目录
+    TF_WORK_DIR      = "infra/envs/${params.ENV}"
+  }
+  
+  stages {
+    stage('环境验证') {
+      steps {
+        script {
+          echo "=== 部署环境: ${params.ENV} ==="
+          echo "=== 操作类型: ${params.ACTION} ==="
+          
+          // 确定目标角色
+          env.TARGET_ROLE = params.ENV == 'prod' ? env.ROLE_PROD :
+                            params.ENV == 'test' ? env.ROLE_TEST :
+                            env.ROLE_DEV
+          
+          echo "=== 目标角色: ${env.TARGET_ROLE} ==="
+          
+          // Prod 环境必须手动批准
+          if (params.ENV == 'prod' && params.AUTO_APPROVE) {
+            error('Prod 环境不允许自动批准！')
+          }
+        }
+      }
+    }
+    
+    stage('检出代码') {
+      steps {
+        checkout scm
+      }
+    }
+    
+    stage('Terraform Init') {
+      steps {
+        dir(env.TF_WORK_DIR) {
+          withAWS(region: env.AWS_REGION, role: env.TARGET_ROLE, roleSessionName: "jenkins-${params.ENV}") {
+            sh """
+              terraform version
+              terraform init -backend-config=backend.hcl -reconfigure
+            """
+          }
+        }
+      }
+    }
+    
+    stage('Terraform Validate') {
+      steps {
+        dir(env.TF_WORK_DIR) {
+          sh 'terraform validate'
+        }
+      }
+    }
+    
+    stage('Terraform Plan') {
+      when {
+        expression { params.ACTION == 'plan' || params.ACTION == 'apply' }
+      }
+      steps {
+        dir(env.TF_WORK_DIR) {
+          withAWS(region: env.AWS_REGION, role: env.TARGET_ROLE, roleSessionName: "jenkins-${params.ENV}") {
+            script {
+              sh """
+                terraform plan \\
+                  -var-file=${params.ENV}.tfvars \\
+                  -out=${params.ENV}.tfplan \\
+                  -no-color | tee plan.txt
+              """
+              
+              // 保存 plan 文件供后续使用
+              archiveArtifacts artifacts: "${env.TF_WORK_DIR}/${params.ENV}.tfplan", fingerprint: true
+              archiveArtifacts artifacts: "${env.TF_WORK_DIR}/plan.txt", fingerprint: true
+            }
+          }
+        }
+      }
+    }
+    
+    stage('审批 - Apply') {
+      when {
+        expression { params.ACTION == 'apply' }
+      }
+      steps {
+        script {
+          if (params.ENV == 'prod') {
+            // Prod 环境必须手动审批
+            timeout(time: 30, unit: 'MINUTES') {
+              input message: '确认部署到 Prod 环境？', ok: 'Deploy'
+            }
+          } else if (!params.AUTO_APPROVE) {
+            // Dev/Test 可选择是否审批
+            timeout(time: 10, unit: 'MINUTES') {
+              input message: "确认部署到 ${params.ENV} 环境？", ok: 'Deploy'
+            }
+          }
+        }
+      }
+    }
+    
+    stage('Terraform Apply') {
+      when {
+        expression { params.ACTION == 'apply' }
+      }
+      steps {
+        dir(env.TF_WORK_DIR) {
+          withAWS(region: env.AWS_REGION, role: env.TARGET_ROLE, roleSessionName: "jenkins-${params.ENV}") {
+            sh """
+              terraform apply -auto-approve ${params.ENV}.tfplan
+            """
+          }
+        }
+      }
+    }
+    
+    stage('审批 - Destroy') {
+      when {
+        expression { params.ACTION == 'destroy' }
+      }
+      steps {
+        script {
+          timeout(time: 30, unit: 'MINUTES') {
+            input message: "⚠️ 警告：确认销毁 ${params.ENV} 环境的所有资源？", ok: 'Destroy'
+          }
+        }
+      }
+    }
+    
+    stage('Terraform Destroy') {
+      when {
+        expression { params.ACTION == 'destroy' }
+      }
+      steps {
+        dir(env.TF_WORK_DIR) {
+          withAWS(region: env.AWS_REGION, role: env.TARGET_ROLE, roleSessionName: "jenkins-${params.ENV}") {
+            sh """
+              terraform destroy \\
+                -var-file=${params.ENV}.tfvars \\
+                -auto-approve
+            """
+          }
+        }
+      }
+    }
+    
+    stage('输出结果') {
+      when {
+        expression { params.ACTION == 'apply' }
+      }
+      steps {
+        dir(env.TF_WORK_DIR) {
+          withAWS(region: env.AWS_REGION, role: env.TARGET_ROLE, roleSessionName: "jenkins-${params.ENV}") {
+            sh 'terraform output -no-color'
+          }
+        }
+      }
+    }
+  }
+  
+  post {
+    always {
+      // 清理工作空间
+      cleanWs()
+    }
+    success {
+      echo "✅ ${params.ACTION} 操作成功完成于 ${params.ENV} 环境"
+    }
+    failure {
+      echo "❌ ${params.ACTION} 操作失败于 ${params.ENV} 环境"
+    }
+  }
+}
+
