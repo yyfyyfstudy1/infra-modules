@@ -12,10 +12,39 @@ pipeline {
     AWS_REGION       = 'ap-southeast-2'
   }
 
+  options {
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+
   stages {
     stage('Checkout') {
       steps {
         checkout scm
+      }
+    }
+
+    stage('Build Info') {
+      steps {
+        script {
+          echo "🚀 Jenkins Pipeline 启动"
+          echo "📋 构建参数："
+          echo "   - 环境: ${params.ENV}"
+          echo "   - 操作: ${params.ACTION}"
+          echo "   - 自动批准: ${params.AUTO_APPROVE}"
+          echo ""
+          echo "💡 提示："
+          if (params.ACTION == 'plan') {
+            echo "   - 当前执行 PLAN，只查看变更，不会实际创建资源"
+            echo "   - 如需创建资源，请重新构建并选择 ACTION=apply"
+          } else if (params.ACTION == 'apply') {
+            echo "   - 当前执行 APPLY，将实际创建/修改资源"
+            echo "   - 请确认这是你想要的操作"
+          } else if (params.ACTION == 'destroy') {
+            echo "   - ⚠️  当前执行 DESTROY，将删除资源"
+            echo "   - 请确认这是你想要的操作"
+          }
+        }
       }
     }
 
@@ -31,11 +60,14 @@ pipeline {
 
               dir("infra/envs/${params.ENV}") {
                 if (params.ACTION == 'plan') {
+                  echo "🔍 执行 Terraform Plan..."
                   sh """
                     terraform init -backend-config=backend.hcl -reconfigure
                     terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
                   """
+                  echo "✅ Plan 完成！如需应用变更，请重新构建并选择 ACTION=apply"
                 } else if (params.ACTION == 'apply') {
+                  echo "🚀 执行 Terraform Apply..."
                   sh """
                     terraform init -backend-config=backend.hcl -reconfigure
                     terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
@@ -44,7 +76,9 @@ pipeline {
                     input message: "确认 Apply 到 ${params.ENV} ?", ok: 'Apply'
                   }
                   sh "terraform apply -auto-approve tfplan"
+                  echo "✅ Apply 完成！资源已创建/更新"
                 } else if (params.ACTION == 'destroy') {
+                  echo "⚠️  执行 Terraform Destroy..."
                   if (params.ENV == 'prod') {
                     input message: "确认 DESTROY 生产环境？", ok: 'YES, destroy'
                   }
@@ -53,6 +87,7 @@ pipeline {
                     terraform init -backend-config=backend.hcl -reconfigure
                     terraform destroy ${approve} -var-file=${params.ENV}.tfvars
                   """
+                  echo "✅ Destroy 完成！资源已删除"
                 }
               }
             }
