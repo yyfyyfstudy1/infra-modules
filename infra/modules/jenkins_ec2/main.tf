@@ -129,7 +129,7 @@ resource "aws_iam_role" "jenkins" {
   tags = var.tags
 }
 
-# IAM 策略 - 允许 AssumeRole 到 test/prod
+# IAM 策略 - 允许 AssumeRole 到其他账户（通过 Jenkins 凭证管理）
 resource "aws_iam_role_policy" "jenkins_assume_role" {
   name = "${var.name_prefix}-assume-role"
   role = aws_iam_role.jenkins.id
@@ -140,10 +140,7 @@ resource "aws_iam_role_policy" "jenkins_assume_role" {
       {
         Effect = "Allow"
         Action = "sts:AssumeRole"
-        Resource = [
-          "arn:aws:iam::${var.test_account_id}:role/JenkinsDeployerRole",
-          "arn:aws:iam::${var.prod_account_id}:role/JenkinsDeployerRole"
-        ]
+        Resource = "*"  # 允许 AssumeRole 到任何角色，具体通过 Jenkins 凭证控制
       }
     ]
   })

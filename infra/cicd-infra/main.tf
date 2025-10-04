@@ -55,8 +55,6 @@ module "jenkins_ec2" {
   instance_type       = var.jenkins_instance_type
   ebs_volume_size     = var.jenkins_ebs_size
   allowed_cidr_blocks = var.allowed_cidr_blocks
-  test_account_id     = var.test_account_id
-  prod_account_id     = var.prod_account_id
   key_name            = var.jenkins_key_name
 
   tags = local.common_tags

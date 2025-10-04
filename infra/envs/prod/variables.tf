@@ -16,11 +16,6 @@ variable "aws_region" {
   default     = "ap-southeast-2"
 }
 
-variable "aws_profile" {
-  description = "AWS CLI Profile 名称"
-  type        = string
-  default     = "prod-account"
-}
 
 variable "chime_client_region" {
   description = "Chime Meetings 客户端区域"

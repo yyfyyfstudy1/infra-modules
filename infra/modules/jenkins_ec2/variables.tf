@@ -30,15 +30,6 @@ variable "allowed_cidr_blocks" {
   type        = list(string)
 }
 
-variable "test_account_id" {
-  description = "Test 账户 ID"
-  type        = string
-}
-
-variable "prod_account_id" {
-  description = "Prod 账户 ID"
-  type        = string
-}
 
 variable "key_name" {
   description = "EC2 密钥对名称（可选）"

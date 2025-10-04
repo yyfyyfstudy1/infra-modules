@@ -62,14 +62,4 @@ variable "acm_certificate_arn" {
   default     = ""
 }
 
-# 跨账号配置
-variable "test_account_id" {
-  description = "Test 账户 ID"
-  type        = string
-}
-
-variable "prod_account_id" {
-  description = "Prod 账户 ID"
-  type        = string
-}
 
