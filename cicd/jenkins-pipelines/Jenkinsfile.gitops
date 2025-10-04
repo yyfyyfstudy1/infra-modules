@@ -170,19 +170,19 @@ def commentPlanToPR() {
 ## 🔍 Terraform Plan - ${params.ENV.toUpperCase()} Environment
 
 **构建信息：**
-- 环境: \`${params.ENV}\`
-- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
-- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 环境: `${params.ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
 - 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
 
 **计划摘要：**
-\`\`\`
+```
 ${planContent}
-\`\`\`
+```
 
 **下一步：**
 - ✅ 如果计划正确，请合并此 PR
-- 🔄 合并后将自动触发 \`terraform apply\`
+- 🔄 合并后将自动触发 terraform apply
 - ❌ 如有问题，请修改代码后重新提交
 
 ---
@@ -203,13 +203,13 @@ def commentApplyToPR() {
 ## ✅ Terraform Apply 完成 - ${params.ENV.toUpperCase()} Environment
 
 **构建信息：**
-- 环境: \`${params.ENV}\`
-- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
-- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 环境: `${params.ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
 - 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
 
 **执行结果：**
-🎉 资源已成功创建/更新到 \`${params.ENV}\` 环境
+🎉 资源已成功创建/更新到 ${params.ENV} 环境
 
 ---
 *此评论由 Jenkins 自动生成*
@@ -229,13 +229,13 @@ def commentDestroyToPR() {
 ## ⚠️ Terraform Destroy 完成 - ${params.ENV.toUpperCase()} Environment
 
 **构建信息：**
-- 环境: \`${params.ENV}\`
-- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
-- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 环境: `${params.ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
 - 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
 
 **执行结果：**
-🗑️ 资源已从 \`${params.ENV}\` 环境删除
+🗑️ 资源已从 ${params.ENV} 环境删除
 
 ---
 *此评论由 Jenkins 自动生成*
@@ -255,10 +255,10 @@ def commentFailureToPR() {
 ## ❌ Terraform Pipeline 失败 - ${params.ENV.toUpperCase()} Environment
 
 **构建信息：**
-- 环境: \`${params.ENV}\`
-- 操作: \`${params.ACTION}\`
-- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
-- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 环境: `${params.ENV}`
+- 操作: `${params.ACTION}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
 - 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
 
 **错误信息：**
