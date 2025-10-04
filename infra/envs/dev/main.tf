@@ -77,3 +77,16 @@ module "test_bucket" {
   tags               = local.common_tags
 }
 
+# CI/CD 测试用的 S3 桶
+module "test_cicd_bucket" {
+  source = "../../modules/s3_bucket"
+
+  bucket_name        = "testCICD"
+  versioning_enabled = true
+  force_destroy      = true
+  tags = merge(local.common_tags, {
+    Purpose = "CI/CD-Testing"
+    CreatedBy = "Jenkins-Pipeline"
+  })
+}
+

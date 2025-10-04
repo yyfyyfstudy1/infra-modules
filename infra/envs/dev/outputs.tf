@@ -23,3 +23,13 @@ output "test_bucket_arn" {
   value       = module.test_bucket.bucket_arn
 }
 
+output "test_cicd_bucket_name" {
+  description = "CI/CD 测试 S3 桶名称"
+  value       = module.test_cicd_bucket.bucket_id
+}
+
+output "test_cicd_bucket_arn" {
+  description = "CI/CD 测试 S3 桶 ARN"
+  value       = module.test_cicd_bucket.bucket_arn
+}
+
