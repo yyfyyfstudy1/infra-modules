@@ -16,8 +16,6 @@ pipeline {
   options {
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '10'))
-    // 保留构建产物
-    archiveArtifacts artifacts: '**/tfplan, **/plan.txt, **/plan.json', allowEmptyArchive: true
   }
 
   stages {
@@ -88,8 +86,10 @@ pipeline {
                   """
                   
                   // 如果是 PR，自动评论到 GitHub
-                  if (env.CHANGE_ID) {
-                    commentPlanToPR()
+                  script {
+                    if (env.CHANGE_ID) {
+                      commentPlanToPR()
+                    }
                   }
                   
                   echo "✅ Plan 完成！"
@@ -112,8 +112,10 @@ pipeline {
                   sh "terraform apply -auto-approve tfplan"
                   
                   // 如果是 PR，评论应用结果
-                  if (env.CHANGE_ID) {
-                    commentApplyToPR()
+                  script {
+                    if (env.CHANGE_ID) {
+                      commentApplyToPR()
+                    }
                   }
                   
                   echo "✅ Apply 完成！资源已创建/更新"
@@ -130,8 +132,10 @@ pipeline {
                   """
                   
                   // 如果是 PR，评论销毁结果
-                  if (env.CHANGE_ID) {
-                    commentDestroyToPR()
+                  script {
+                    if (env.CHANGE_ID) {
+                      commentDestroyToPR()
+                    }
                   }
                   
                   echo "✅ Destroy 完成！资源已删除"
@@ -146,6 +150,8 @@ pipeline {
 
   post {
     always {
+      // 归档构建产物
+      archiveArtifacts artifacts: '**/tfplan, **/plan.txt, **/plan.json', allowEmptyArchive: true
       // 清理临时文件
       sh 'rm -f infra/envs/*/tfplan infra/envs/*/plan.txt infra/envs/*/plan.json || true'
     }
@@ -155,8 +161,10 @@ pipeline {
     failure {
       echo "❌ Pipeline 执行失败！"
       // 如果是 PR，评论失败信息
-      if (env.CHANGE_ID) {
-        commentFailureToPR()
+      script {
+        if (env.CHANGE_ID) {
+          commentFailureToPR()
+        }
       }
     }
   }
