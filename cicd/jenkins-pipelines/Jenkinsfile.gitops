@@ -16,6 +16,8 @@ pipeline {
   options {
     timestamps()
     buildDiscarder(logRotator(numToKeepStr: '10'))
+    // 防止并发构建
+    disableConcurrentBuilds()
   }
 
   stages {
