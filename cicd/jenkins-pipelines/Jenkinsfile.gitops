@@ -1,0 +1,307 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'ENV', choices: ['dev', 'test', 'prod'], description: 'Target environment')
+    choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action')
+    booleanParam(name: 'AUTO_APPROVE', defaultValue: true, description: 'Auto-approve (prod 建议手动)')
+  }
+
+  environment {
+    TF_IN_AUTOMATION = '1'
+    AWS_REGION       = 'ap-southeast-2'
+    GITHUB_REPO      = 'yyfyyfstudy1/infra-modules'
+  }
+
+  options {
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    // 保留构建产物
+    archiveArtifacts artifacts: '**/tfplan, **/plan.txt, **/plan.json', allowEmptyArchive: true
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Build Info') {
+      steps {
+        script {
+          echo "🚀 GitOps Terraform Pipeline 启动"
+          echo "📋 构建参数："
+          echo "   - 环境: ${params.ENV}"
+          echo "   - 操作: ${params.ACTION}"
+          echo "   - 自动批准: ${params.AUTO_APPROVE}"
+          echo "   - 分支: ${env.BRANCH_NAME ?: 'main'}"
+          echo "   - 提交: ${env.GIT_COMMIT ?: 'unknown'}"
+          echo ""
+          
+          // 检测是否为 PR 构建
+          if (env.CHANGE_ID) {
+            echo "🔍 检测到 Pull Request: #${env.CHANGE_ID}"
+            echo "   - PR 标题: ${env.CHANGE_TITLE ?: 'N/A'}"
+            echo "   - 源分支: ${env.CHANGE_BRANCH ?: 'N/A'}"
+            echo "   - 目标分支: ${env.CHANGE_TARGET ?: 'N/A'}"
+          } else {
+            echo "📝 直接推送到分支: ${env.BRANCH_NAME ?: 'main'}"
+          }
+          
+          echo "💡 提示："
+          if (params.ACTION == 'plan') {
+            echo "   - 当前执行 PLAN，只查看变更，不会实际创建资源"
+            if (env.CHANGE_ID) {
+              echo "   - 计划结果将自动评论到 PR #${env.CHANGE_ID}"
+            }
+            echo "   - 如需创建资源，请重新构建并选择 ACTION=apply"
+          } else if (params.ACTION == 'apply') {
+            echo "   - 当前执行 APPLY，将实际创建/修改资源"
+            echo "   - 请确认这是你想要的操作"
+          } else if (params.ACTION == 'destroy') {
+            echo "   - ⚠️  当前执行 DESTROY，将删除资源"
+            echo "   - 请确认这是你想要的操作"
+          }
+        }
+      }
+    }
+
+    stage('Terraform Operations') {
+      steps {
+        script {
+          def credId = (params.ENV == 'dev')  ? 'aws-role-dev'  :
+                       (params.ENV == 'test') ? 'aws-role-test' :
+                                                 'aws-role-prod'
+
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${params.ENV}") {
+
+              dir("infra/envs/${params.ENV}") {
+                if (params.ACTION == 'plan') {
+                  echo "🔍 执行 Terraform Plan..."
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                    terraform show -no-color tfplan > plan.txt
+                    terraform show -json tfplan > plan.json
+                  """
+                  
+                  // 如果是 PR，自动评论到 GitHub
+                  if (env.CHANGE_ID) {
+                    commentPlanToPR()
+                  }
+                  
+                  echo "✅ Plan 完成！"
+                  if (env.CHANGE_ID) {
+                    echo "📝 计划结果已评论到 PR #${env.CHANGE_ID}"
+                  }
+                  echo "💡 如需应用变更，请重新构建并选择 ACTION=apply"
+                  
+                } else if (params.ACTION == 'apply') {
+                  echo "🚀 执行 Terraform Apply..."
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                  """
+                  
+                  if (!params.AUTO_APPROVE.toBoolean()) {
+                    input message: "确认 Apply 到 ${params.ENV} ?", ok: 'Apply'
+                  }
+                  
+                  sh "terraform apply -auto-approve tfplan"
+                  
+                  // 如果是 PR，评论应用结果
+                  if (env.CHANGE_ID) {
+                    commentApplyToPR()
+                  }
+                  
+                  echo "✅ Apply 完成！资源已创建/更新"
+                  
+                } else if (params.ACTION == 'destroy') {
+                  echo "⚠️  执行 Terraform Destroy..."
+                  if (params.ENV == 'prod') {
+                    input message: "确认 DESTROY 生产环境？", ok: 'YES, destroy'
+                  }
+                  def approve = params.AUTO_APPROVE.toBoolean() ? "-auto-approve" : ""
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform destroy ${approve} -var-file=${params.ENV}.tfvars
+                  """
+                  
+                  // 如果是 PR，评论销毁结果
+                  if (env.CHANGE_ID) {
+                    commentDestroyToPR()
+                  }
+                  
+                  echo "✅ Destroy 完成！资源已删除"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      // 清理临时文件
+      sh 'rm -f infra/envs/*/tfplan infra/envs/*/plan.txt infra/envs/*/plan.json || true'
+    }
+    success {
+      echo "🎉 Pipeline 执行成功！"
+    }
+    failure {
+      echo "❌ Pipeline 执行失败！"
+      // 如果是 PR，评论失败信息
+      if (env.CHANGE_ID) {
+        commentFailureToPR()
+      }
+    }
+  }
+}
+
+// 评论 Plan 结果到 PR
+def commentPlanToPR() {
+  try {
+    def planContent = readFile("infra/envs/${params.ENV}/plan.txt").trim()
+    def comment = """
+## 🔍 Terraform Plan - ${params.ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: \`${params.ENV}\`
+- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
+- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**计划摘要：**
+\`\`\`
+${planContent}
+\`\`\`
+
+**下一步：**
+- ✅ 如果计划正确，请合并此 PR
+- 🔄 合并后将自动触发 \`terraform apply\`
+- ❌ 如有问题，请修改代码后重新提交
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Plan 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论 Apply 结果到 PR
+def commentApplyToPR() {
+  try {
+    def comment = """
+## ✅ Terraform Apply 完成 - ${params.ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: \`${params.ENV}\`
+- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
+- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**执行结果：**
+🎉 资源已成功创建/更新到 \`${params.ENV}\` 环境
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Apply 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论 Destroy 结果到 PR
+def commentDestroyToPR() {
+  try {
+    def comment = """
+## ⚠️ Terraform Destroy 完成 - ${params.ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: \`${params.ENV}\`
+- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
+- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**执行结果：**
+🗑️ 资源已从 \`${params.ENV}\` 环境删除
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Destroy 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论失败信息到 PR
+def commentFailureToPR() {
+  try {
+    def comment = """
+## ❌ Terraform Pipeline 失败 - ${params.ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: \`${params.ENV}\`
+- 操作: \`${params.ACTION}\`
+- 分支: \`${env.BRANCH_NAME ?: 'main'}\`
+- 提交: \`${env.GIT_COMMIT?.take(7) ?: 'unknown'}\`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**错误信息：**
+请查看 [构建日志](${env.BUILD_URL}) 获取详细错误信息。
+
+**建议：**
+- 🔍 检查 Terraform 配置语法
+- 🔧 修复错误后重新提交
+- 📞 如需要帮助，请联系 DevOps 团队
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 失败信息已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 发送评论到 GitHub PR
+def postCommentToPR(String comment) {
+  withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+    def apiUrl = "https://api.github.com/repos/${env.GITHUB_REPO}/issues/${env.CHANGE_ID}/comments"
+    def payload = [
+      body: comment
+    ]
+    
+    def response = httpRequest(
+      httpMode: 'POST',
+      url: apiUrl,
+      headers: [
+        'Authorization': "token ${GITHUB_TOKEN}",
+        'Content-Type': 'application/json'
+      ],
+      requestBody: groovy.json.JsonBuilder(payload).toString()
+    )
+    
+    if (response.status == 201) {
+      echo "✅ 成功评论到 PR #${env.CHANGE_ID}"
+    } else {
+      echo "⚠️ 评论 PR 失败，状态码: ${response.status}"
+    }
+  }
+}
