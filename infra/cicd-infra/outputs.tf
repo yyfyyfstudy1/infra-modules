@@ -25,12 +25,12 @@ output "jenkins_instance_id" {
 
 output "jenkins_instance_private_ip" {
   description = "Jenkins EC2 实例私有 IP"
-  value       = module.jenkins_ec2.private_ip
+  value       = module.jenkins_ec2.instance_private_ip
 }
 
 output "jenkins_role_arn" {
   description = "Jenkins IAM 角色 ARN"
-  value       = module.jenkins_ec2.role_arn
+  value       = module.jenkins_ec2.instance_role_arn
 }
 
 output "vpc_id" {
