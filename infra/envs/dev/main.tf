@@ -81,12 +81,17 @@ module "test_bucket" {
 module "test_cicd_bucket" {
   source = "../../modules/s3_bucket"
 
-  bucket_name        = "testCICD"
+  bucket_name        = "test-cicd-${random_id.bucket_suffix.hex}"
   versioning_enabled = true
   force_destroy      = true
   tags = merge(local.common_tags, {
     Purpose = "CI/CD-Testing"
     CreatedBy = "Jenkins-Pipeline"
   })
+}
+
+# 生成随机后缀确保 bucket 名称唯一
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
 }
 
