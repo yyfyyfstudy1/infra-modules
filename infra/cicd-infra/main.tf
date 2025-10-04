@@ -2,9 +2,36 @@ terraform {
   backend "s3" {} # 使用 init -backend-config=backend.hcl 注入参数
 }
 
+# 本地变量
+locals {
+  env         = "cicd"
+  name_prefix = "${var.project_name}-${local.env}"
+  
+  common_tags = {
+    Environment = local.env
+    Project     = var.project_name
+    Owner       = var.owner
+    ManagedBy   = "Terraform"
+    Purpose     = "Jenkins-CICD"
+  }
+}
+
+# 获取可用区
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+# 获取当前 AWS 账户信息
+data "aws_caller_identity" "current" {}
+
+# 本地变量 - 可用区
+locals {
+  azs = data.aws_availability_zones.available.names
+}
+
 # VPC 模块
 module "vpc" {
-  source = "../../modules/vpc"
+  source = "../modules/vpc"
 
   name_prefix          = local.name_prefix
   vpc_cidr             = var.vpc_cidr
@@ -20,7 +47,7 @@ module "vpc" {
 
 # Jenkins EC2 模块
 module "jenkins_ec2" {
-  source = "../../modules/jenkins_ec2"
+  source = "../modules/jenkins_ec2"
 
   name_prefix         = local.name_prefix
   vpc_id              = module.vpc.vpc_id
@@ -39,7 +66,7 @@ module "jenkins_ec2" {
 
 # Jenkins ALB 模块
 module "jenkins_alb" {
-  source = "../../modules/jenkins_alb"
+  source = "../modules/jenkins_alb"
 
   name_prefix       = local.name_prefix
   vpc_id            = module.vpc.vpc_id
