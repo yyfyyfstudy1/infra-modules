@@ -1,0 +1,64 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'ENV', choices: ['dev', 'test', 'prod'], description: 'Target environment')
+    choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action')
+    booleanParam(name: 'AUTO_APPROVE', defaultValue: true, description: 'Auto-approve (prod 建议手动)')
+  }
+
+  environment {
+    TF_IN_AUTOMATION = '1'
+    AWS_REGION       = 'ap-southeast-2'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Terraform Operations') {
+      steps {
+        script {
+          def credId = (params.ENV == 'dev')  ? 'aws-role-dev'  :
+                       (params.ENV == 'test') ? 'aws-role-test' :
+                                                 'aws-role-prod'
+
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${params.ENV}") {
+
+              dir("infra/envs/${params.ENV}") {
+                if (params.ACTION == 'plan') {
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                  """
+                } else if (params.ACTION == 'apply') {
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                  """
+                  if (!params.AUTO_APPROVE.toBoolean()) {
+                    input message: "确认 Apply 到 ${params.ENV} ?", ok: 'Apply'
+                  }
+                  sh "terraform apply -auto-approve tfplan"
+                } else if (params.ACTION == 'destroy') {
+                  if (params.ENV == 'prod') {
+                    input message: "确认 DESTROY 生产环境？", ok: 'YES, destroy'
+                  }
+                  def approve = params.AUTO_APPROVE.toBoolean() ? "-auto-approve" : ""
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform destroy ${approve} -var-file=${params.ENV}.tfvars
+                  """
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
