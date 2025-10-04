@@ -1,0 +1,93 @@
+# Terraform 相关文件
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.terraformrc
+terraform.rc
+
+# Terraform 计划文件
+*.tfplan
+*.tfplan.*
+
+# 崩溃日志文件
+crash.log
+crash.*.log
+
+# 排除所有 .tfvars 文件，这些文件可能包含敏感数据
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# 包含 override 文件，这些文件通常用于覆盖资源
+.terraformrc
+terraform.rc
+
+# Lambda 部署包
+*.zip
+dist/
+build/
+
+# IDE 和编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 备份文件
+*.bak
+*.backup
+
+# 测试覆盖率报告
+coverage/
+*.cover
+
+# Node.js (如果使用任何 Node.js 工具)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (如果使用任何 Python 工具)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 敏感配置文件
+secrets.tf
+secrets.tfvars
+*.pem
+*.key
+*.crt
