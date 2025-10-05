@@ -293,7 +293,7 @@ def isPRMerged() {
 def isCommitOnMain() {
   try {
     def status = sh(
-      script: "git branch -r --contains HEAD | grep -E 'origin/main$' >/dev/null 2>&1; echo $?",
+      script: '''git branch -r --contains HEAD | grep -E 'origin/main$' >/dev/null 2>&1; echo $?''',
       returnStdout: true
     ).trim()
     return status == '0'
@@ -307,7 +307,7 @@ def isCommitOnMain() {
 def isMergeCommitToMain() {
   try {
     def message = sh(
-      script: "git log -1 --pretty=%B",
+      script: 'git log -1 --pretty=%B',
       returnStdout: true
     ).trim()
     // 典型合并信息：Merge pull request #<id> from <branch>
