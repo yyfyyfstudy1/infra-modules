@@ -80,9 +80,9 @@ module "api_gateway" {
   tags = local.common_tags
 }
 
-# 测试用的 S3 桶（仅在 dev 环境或显式启用时创建）
+# 测试用的 S3 桶
 module "test_bucket" {
-  count  = var.enable_test_bucket ? 1 : 0
+
   source = "../modules/s3_bucket"
 
   bucket_name        = "${local.name_prefix}-test-bucket-mt"
