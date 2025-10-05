@@ -87,6 +87,9 @@ pipeline {
     }
 
     stage('Terraform Operations') {
+      when {
+        expression { env.IS_PR_BUILD == 'true' }
+      }
       steps {
         script {
           def credId = (env.TARGET_ENV == 'dev')  ? 'aws-role-dev'  :
@@ -165,6 +168,84 @@ pipeline {
               }
             }
           }
+        }
+      }
+    }
+
+    // Deploy DEV (auto) - 在 PR 合并到 main 后自动执行
+    stage('Deploy DEV (auto)') {
+      when {
+        expression { env.IS_PR_BUILD == 'false' && (isMergeCommitToMain() || isCommitOnMain()) }
+      }
+      steps {
+        script {
+          echo "🚀 部署到 DEV 环境（自动）"
+          def credId = 'aws-role-dev'
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-dev") {
+              dir("infra/envs/dev") {
+                sh """
+                  terraform init -backend-config=backend.hcl -reconfigure
+                  terraform plan -var-file=dev.tfvars -out=tfplan
+                """
+                sh "terraform apply -auto-approve tfplan"
+              }
+            }
+          }
+          echo "✅ DEV 环境部署完成"
+        }
+      }
+    }
+
+    // Promote to TEST (manual gate)
+    stage('Promote to TEST (manual gate)') {
+      when {
+        expression { env.IS_PR_BUILD == 'false' && (isMergeCommitToMain() || isCommitOnMain()) }
+      }
+      steps {
+        script {
+          input message: 'Promote 到 TEST 环境？', ok: 'Promote'
+          echo "🚀 部署到 TEST 环境"
+          def credId = 'aws-role-test'
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-test") {
+              dir("infra/envs/test") {
+                sh """
+                  terraform init -backend-config=backend.hcl -reconfigure
+                  terraform plan -var-file=test.tfvars -out=tfplan
+                """
+                sh "terraform apply -auto-approve tfplan"
+              }
+            }
+          }
+          echo "✅ TEST 环境部署完成"
+        }
+      }
+    }
+
+    // Promote to PROD (manual gate)
+    stage('Promote to PROD (manual gate)') {
+      when {
+        expression { env.IS_PR_BUILD == 'false' && (isMergeCommitToMain() || isCommitOnMain()) }
+      }
+      steps {
+        script {
+          input message: 'Promote 到 PROD 环境？（请再次确认）', ok: 'Promote to PROD'
+          echo "🚀 部署到 PROD 环境"
+          def credId = 'aws-role-prod'
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-prod") {
+              dir("infra/envs/prod") {
+                sh """
+                  terraform init -backend-config=backend.hcl -reconfigure
+                  terraform plan -var-file=prod.tfvars -out=tfplan
+                """
+                // 经过上面的人工确认，这里可以使用 auto-approve
+                sh "terraform apply -auto-approve tfplan"
+              }
+            }
+          }
+          echo "✅ PROD 环境部署完成"
         }
       }
     }
