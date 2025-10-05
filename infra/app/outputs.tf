@@ -15,16 +15,16 @@ output "lambda_function_name" {
 
 output "lambda_function_arn" {
   description = "Lambda 函数 ARN"
-  value       = module.lambda_join.arn
+  value       = module.lambda_join.function_arn
 }
 
 output "test_bucket_name" {
   description = "测试 S3 桶名称"
-  value       = var.enable_test_bucket ? module.test_bucket[0].bucket_name : "N/A - Not Created"
+  value       = var.enable_test_bucket ? module.test_bucket[0].bucket_id : "N/A - Not Created"
 }
 
 output "test_bucket_arn" {
   description = "测试 S3 桶 ARN"
-  value       = var.enable_test_bucket ? module.test_bucket[0].arn : "N/A - Not Created"
+  value       = var.enable_test_bucket ? module.test_bucket[0].bucket_arn : "N/A - Not Created"
 }
 
