@@ -1,0 +1,416 @@
+pipeline {
+  agent any
+
+  // 移除参数化构建，改为自动检测
+  // parameters {
+  //   choice(name: 'ENV', choices: ['dev', 'test', 'prod'], description: 'Target environment')
+  //   choice(name: 'ACTION', choices: ['plan', 'apply', 'destroy'], description: 'Terraform action')
+  //   booleanParam(name: 'AUTO_APPROVE', defaultValue: true, description: 'Auto-approve (prod 建议手动)')
+  // }
+
+  environment {
+    TF_IN_AUTOMATION = '1'
+    AWS_REGION       = 'ap-southeast-2'
+    GITHUB_REPO      = 'yyfyyfstudy1/infra-modules'
+  }
+
+  options {
+    timestamps()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    // 防止并发构建
+    disableConcurrentBuilds()
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Detect Action & Environment') {
+      steps {
+        script {
+          // 自动检测环境（基于分支或PR）
+          if (env.CHANGE_ID) {
+            // PR 构建
+            env.TARGET_ENV = 'dev'  // PR 默认在 dev 环境测试
+            env.IS_PR_BUILD = 'true'
+            
+            // 检测 PR 状态
+            if (env.CHANGE_TARGET == 'main') {
+              if (isPRMerged()) {
+                env.TERRAFORM_ACTION = 'apply'
+                echo "🎯 检测到 PR 已合并，执行 terraform apply"
+              } else {
+                env.TERRAFORM_ACTION = 'plan'
+                echo "🎯 检测到 PR 构建，执行 terraform plan"
+              }
+            } else {
+              env.TERRAFORM_ACTION = 'plan'
+              echo "🎯 检测到 PR 构建（非 main 分支），执行 terraform plan"
+            }
+          } else {
+            // 直接推送构建（非 PR）
+            env.IS_PR_BUILD = 'false'
+            // 当 Jenkins 未提供 BRANCH_NAME 时，主动判断是否在 main 上，及是否为合并提交
+            def onMain = isCommitOnMain()
+            def mergedPR = isMergeCommitToMain()
+
+            if (mergedPR || onMain) {
+              // 合并到 main 后，默认对 dev 环境执行 apply（再由人工推进到 test/prod）
+              env.TARGET_ENV = 'dev'
+              env.TERRAFORM_ACTION = 'apply'
+              echo "🎯 检测到合并到 main，执行 terraform apply 到 dev"
+            } else {
+              env.TARGET_ENV = 'dev'
+              env.TERRAFORM_ACTION = 'plan'
+              echo "🎯 检测到分支推送，执行 terraform plan 到 dev"
+            }
+          }
+          
+          echo "📋 自动检测结果："
+          echo "   - 环境: ${env.TARGET_ENV}"
+          echo "   - 操作: ${env.TERRAFORM_ACTION}"
+          echo "   - 是否 PR: ${env.IS_PR_BUILD}"
+          echo "   - 分支: ${env.BRANCH_NAME ?: 'N/A'}"
+          echo "   - 提交: ${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+          
+          if (env.CHANGE_ID) {
+            echo "   - PR ID: #${env.CHANGE_ID}"
+            echo "   - PR 标题: ${env.CHANGE_TITLE ?: 'N/A'}"
+            echo "   - 源分支: ${env.CHANGE_BRANCH ?: 'N/A'}"
+            echo "   - 目标分支: ${env.CHANGE_TARGET ?: 'N/A'}"
+          }
+        }
+      }
+    }
+
+    stage('Terraform Operations') {
+      when {
+        expression { env.IS_PR_BUILD == 'true' }
+      }
+      steps {
+        script {
+          def credId = (env.TARGET_ENV == 'dev')  ? 'aws-role-dev'  :
+                       (env.TARGET_ENV == 'test') ? 'aws-role-test' :
+                                                     'aws-role-prod'
+
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${env.TARGET_ENV}") {
+
+              dir("infra/app") {
+                if (env.TERRAFORM_ACTION == 'plan') {
+                  echo "🔍 执行 Terraform Plan..."
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform plan -var-file=envs/${env.TARGET_ENV}.tfvars -out=tfplan
+                    terraform show -no-color tfplan > plan.txt
+                    terraform show -json tfplan > plan.json
+                  """
+                  
+                  // 如果是 PR，自动评论到 GitHub
+                  script {
+                    if (env.IS_PR_BUILD == 'true') {
+                      commentPlanToPR()
+                    }
+                  }
+                  
+                  echo "✅ Plan 完成！"
+                  if (env.IS_PR_BUILD == 'true') {
+                    echo "📝 计划结果已评论到 PR #${env.CHANGE_ID}"
+                  }
+                  
+                } else if (env.TERRAFORM_ACTION == 'apply') {
+                  echo "🚀 执行 Terraform Apply..."
+                  
+                  // 对于生产环境，需要额外确认
+                  if (env.TARGET_ENV == 'prod') {
+                    input message: "确认 Apply 到生产环境 ${env.TARGET_ENV}？", ok: '确认 Apply'
+                  }
+                  
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform plan -var-file=envs/${env.TARGET_ENV}.tfvars -out=tfplan
+                  """
+                  
+                  sh "terraform apply -auto-approve tfplan"
+                  
+                  // 如果是 PR，评论应用结果
+                  script {
+                    if (env.IS_PR_BUILD == 'true') {
+                      commentApplyToPR()
+                    }
+                  }
+                  
+                  echo "✅ Apply 完成！资源已创建/更新到 ${env.TARGET_ENV} 环境"
+                  
+                } else if (env.TERRAFORM_ACTION == 'destroy') {
+                  echo "⚠️  执行 Terraform Destroy..."
+                  if (env.TARGET_ENV == 'prod') {
+                    input message: "确认 DESTROY 生产环境？", ok: 'YES, destroy'
+                  }
+                  
+                  sh """
+                    terraform init -backend-config=backend.hcl -reconfigure
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform destroy -auto-approve -var-file=envs/${env.TARGET_ENV}.tfvars
+                  """
+                  
+                  // 如果是 PR，评论销毁结果
+                  script {
+                    if (env.IS_PR_BUILD == 'true') {
+                      commentDestroyToPR()
+                    }
+                  }
+                  
+                  echo "✅ Destroy 完成！资源已从 ${env.TARGET_ENV} 环境删除"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Deploy DEV (auto) - 在 PR 合并到 main 后自动执行
+    stage('Deploy DEV (auto)') {
+      when {
+        expression { env.IS_PR_BUILD == 'false' && (isMergeCommitToMain() || isCommitOnMain()) }
+      }
+      steps {
+        script {
+          echo "🚀 部署到 DEV 环境（自动）"
+          def credId = 'aws-role-dev'
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-dev") {
+              dir("infra/app") {
+                sh """
+                  terraform init -backend-config=backend.hcl -reconfigure
+                  terraform workspace select dev || terraform workspace new dev
+                  terraform plan -var-file=envs/dev.tfvars -out=tfplan
+                """
+                sh "terraform apply -auto-approve tfplan"
+              }
+            }
+          }
+          echo "✅ DEV 环境部署完成"
+        }
+      }
+    }
+
+    
+  }
+
+  post {
+    always {
+      // 归档构建产物
+      archiveArtifacts artifacts: '**/tfplan, **/plan.txt, **/plan.json', allowEmptyArchive: true
+      // 清理临时文件
+      sh 'rm -f infra/app/tfplan infra/app/plan.txt infra/app/plan.json || true'
+    }
+    success {
+      echo "🎉 Pipeline 执行成功！"
+    }
+    failure {
+      echo "❌ Pipeline 执行失败！"
+      // 如果是 PR，评论失败信息
+      script {
+        if (env.IS_PR_BUILD == 'true') {
+          commentFailureToPR()
+        }
+      }
+    }
+  }
+}
+
+// 检查 PR 是否已合并
+def isPRMerged() {
+  try {
+    // 检查当前提交是否在目标分支上
+    def result = sh(
+      script: "git log --oneline -n 10 --grep='Merge pull request #${env.CHANGE_ID}' || echo 'not_merged'",
+      returnStdout: true
+    ).trim()
+    
+    return !result.contains('not_merged')
+  } catch (Exception e) {
+    echo "⚠️ 检查 PR 合并状态失败: ${e.getMessage()}"
+    return false
+  }
+}
+
+// 非 PR 构建：判断当前提交是否在 origin/main 上
+def isCommitOnMain() {
+  try {
+    def status = sh(
+      script: '''git branch -r --contains HEAD | grep -E 'origin/main$' >/dev/null 2>&1; echo $?''',
+      returnStdout: true
+    ).trim()
+    return status == '0'
+  } catch (Exception e) {
+    echo "⚠️ 检查是否在 main 分支失败: ${e.getMessage()}"
+    return false
+  }
+}
+
+// 非 PR 构建：判断最近一次提交是否为合并 PR 的提交
+def isMergeCommitToMain() {
+  try {
+    def message = sh(
+      script: 'git log -1 --pretty=%B',
+      returnStdout: true
+    ).trim()
+    // 典型合并信息：Merge pull request #<id> from <branch>
+    return message.startsWith('Merge pull request #')
+  } catch (Exception e) {
+    echo "⚠️ 检查是否为合并提交失败: ${e.getMessage()}"
+    return false
+  }
+}
+
+// 评论 Plan 结果到 PR
+def commentPlanToPR() {
+  try {
+    def planContent = readFile("infra/app/plan.txt").trim()
+    def comment = """
+## 🔍 Terraform Plan - ${env.TARGET_ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: `${env.TARGET_ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**计划摘要：**
+```
+${planContent}
+```
+
+**下一步：**
+- ✅ 如果计划正确，请合并此 PR
+- 🔄 合并后将自动触发 terraform apply 到 ${env.TARGET_ENV} 环境
+- ❌ 如有问题，请修改代码后重新提交
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Plan 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论 Apply 结果到 PR
+def commentApplyToPR() {
+  try {
+    def comment = """
+## ✅ Terraform Apply 完成 - ${env.TARGET_ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: `${env.TARGET_ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**执行结果：**
+🎉 资源已成功创建/更新到 ${env.TARGET_ENV} 环境
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Apply 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论 Destroy 结果到 PR
+def commentDestroyToPR() {
+  try {
+    def comment = """
+## ⚠️ Terraform Destroy 完成 - ${env.TARGET_ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: `${env.TARGET_ENV}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**执行结果：**
+🗑️ 资源已从 ${env.TARGET_ENV} 环境删除
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 Destroy 结果已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 评论失败信息到 PR
+def commentFailureToPR() {
+  try {
+    def comment = """
+## ❌ Terraform Pipeline 失败 - ${env.TARGET_ENV.toUpperCase()} Environment
+
+**构建信息：**
+- 环境: `${env.TARGET_ENV}`
+- 操作: `${env.TERRAFORM_ACTION}`
+- 分支: `${env.BRANCH_NAME ?: 'main'}`
+- 提交: `${env.GIT_COMMIT?.take(7) ?: 'unknown'}`
+- 构建: [#${env.BUILD_NUMBER}](${env.BUILD_URL})
+
+**错误信息：**
+请查看 [构建日志](${env.BUILD_URL}) 获取详细错误信息。
+
+**建议：**
+- 🔍 检查 Terraform 配置语法
+- 🔧 修复错误后重新提交
+- 📞 如需要帮助，请联系 DevOps 团队
+
+---
+*此评论由 Jenkins 自动生成*
+"""
+    
+    postCommentToPR(comment)
+    echo "📝 失败信息已评论到 PR #${env.CHANGE_ID}"
+  } catch (Exception e) {
+    echo "⚠️ 评论 PR 失败: ${e.getMessage()}"
+  }
+}
+
+// 发送评论到 GitHub PR
+def postCommentToPR(String comment) {
+  withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+    def apiUrl = "https://api.github.com/repos/${env.GITHUB_REPO}/issues/${env.CHANGE_ID}/comments"
+    def payload = [
+      body: comment
+    ]
+    
+    def response = httpRequest(
+      httpMode: 'POST',
+      url: apiUrl,
+      headers: [
+        'Authorization': "token ${GITHUB_TOKEN}",
+        'Content-Type': 'application/json'
+      ],
+      requestBody: groovy.json.JsonBuilder(payload).toString()
+    )
+    
+    if (response.status == 201) {
+      echo "✅ 成功评论到 PR #${env.CHANGE_ID}"
+    } else {
+      echo "⚠️ 评论 PR 失败，状态码: ${response.status}"
+    }
+  }
+}

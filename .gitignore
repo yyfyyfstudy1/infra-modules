@@ -3,7 +3,9 @@
 .terraform.lock.hcl
 *.tfstate
 *.tfstate.*
-*.tfvars
+# 忽略敏感配置文件，但保留环境配置文件
+secrets.tfvars
+*.secrets.tfvars
 *.tfvars.json
 .terraformrc
 terraform.rc
@@ -30,6 +32,9 @@ terraform.rc
 *.zip
 dist/
 build/
+
+# 但是包含必要的部署包
+!dist/join.zip
 
 # IDE 和编辑器文件
 .vscode/
@@ -91,3 +96,8 @@ secrets.tfvars
 *.pem
 *.key
 *.crt
+
+# 明确包含环境配置文件
+!envs/*.tfvars
+!envs/*/*.tfvars
+!cicd-infra/terraform.tfvars
