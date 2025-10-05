@@ -5,7 +5,7 @@ output "environment" {
 
 output "api_invoke_url" {
   description = "API Gateway 调用 URL"
-  value       = module.api_gateway.invoke_url
+  value       = module.api_gateway.api_invoke_url
 }
 
 output "lambda_function_name" {
