@@ -37,7 +37,7 @@ data "aws_iam_policy_document" "chime" {
 module "lambda_join" {
   source = "../modules/lambda_app"
 
-  function_name    = "${local.name_prefix}-join"
+  function_name    = "${local.name_prefix}-join-v2"
   handler          = "JoinFunction::JoinFunction.Function::FunctionHandler"
   runtime          = "dotnet8"
   architectures    = ["arm64"]
