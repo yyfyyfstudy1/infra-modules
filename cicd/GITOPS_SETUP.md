@@ -73,7 +73,7 @@
 git checkout -b feature/add-new-resource
 
 # 2. 修改 Terraform 代码
-# 编辑 infra/envs/dev/main.tf 等文件
+# 编辑 infra/app/main.tf 等文件
 
 # 3. 提交并推送
 git add .
