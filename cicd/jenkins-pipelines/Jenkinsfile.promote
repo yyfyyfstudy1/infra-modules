@@ -39,10 +39,11 @@ pipeline {
           def credId = (params.ENV == 'test') ? 'aws-role-test' : 'aws-role-prod'
           withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
             withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${params.ENV}") {
-              dir("infra/envs/${params.ENV}") {
+              dir("infra/app") {
                 sh """
                   terraform init -backend-config=backend.hcl -reconfigure
-                  terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                  terraform workspace select ${params.ENV} || terraform workspace new ${params.ENV}
+                  terraform plan -var-file=envs/${params.ENV}.tfvars -out=tfplan
                 """
                 if (!params.AUTO_APPROVE.toBoolean() && params.ENV == 'prod') {
                   input message: "确认 Apply 到 ${params.ENV}？", ok: 'Apply'

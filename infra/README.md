@@ -30,38 +30,41 @@ infra/
 ### 部署到 Dev 环境
 
 ```bash
-# 1. 进入 dev 环境目录
-cd infra/envs/dev
+# 1. 进入 app 目录
+cd infra/app
 
 # 2. 初始化 Terraform（使用远端 state）
 terraform init -backend-config=backend.hcl
 
-# 3. 查看计划
-terraform plan -var-file=dev.tfvars
+# 3. 切换到 dev workspace
+terraform workspace select dev || terraform workspace new dev
 
-# 4. 应用更改
-terraform apply -var-file=dev.tfvars
+# 4. 查看计划
+terraform plan -var-file=envs/dev.tfvars
 
-# 5. 查看输出
+# 5. 应用更改
+terraform apply -var-file=envs/dev.tfvars
+
+# 6. 查看输出
 terraform output
 ```
 
 ### 部署到 Test 环境
 
 ```bash
-cd infra/envs/test
-terraform init -backend-config=backend.hcl
-terraform plan -var-file=test.tfvars
-terraform apply -var-file=test.tfvars
+cd infra/app
+terraform workspace select test || terraform workspace new test
+terraform plan -var-file=envs/test.tfvars
+terraform apply -var-file=envs/test.tfvars
 ```
 
 ### 部署到 Prod 环境
 
 ```bash
-cd infra/envs/prod
-terraform init -backend-config=backend.hcl
-terraform plan -var-file=prod.tfvars
-terraform apply -var-file=prod.tfvars
+cd infra/app
+terraform workspace select prod || terraform workspace new prod
+terraform plan -var-file=envs/prod.tfvars
+terraform apply -var-file=envs/prod.tfvars
 ```
 
 ## 环境差异
@@ -143,14 +146,16 @@ terraform apply -var-file=prod.tfvars
 # ... 生成 dist/join.zip
 
 # 应用到 dev
-cd infra/envs/dev
-terraform apply -var-file=dev.tfvars
+cd infra/app
+terraform workspace select dev
+terraform apply -var-file=envs/dev.tfvars
 ```
 
 ### 查看环境输出
 
 ```bash
-cd infra/envs/dev
+cd infra/app
+terraform workspace select dev
 terraform output
 ```
 

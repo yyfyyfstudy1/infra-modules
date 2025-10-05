@@ -99,12 +99,13 @@ pipeline {
           withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
             withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${env.TARGET_ENV}") {
 
-              dir("infra/envs/${env.TARGET_ENV}") {
+              dir("infra/app") {
                 if (env.TERRAFORM_ACTION == 'plan') {
                   echo "🔍 执行 Terraform Plan..."
                   sh """
                     terraform init -backend-config=backend.hcl -reconfigure
-                    terraform plan -var-file=${env.TARGET_ENV}.tfvars -out=tfplan
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform plan -var-file=envs/${env.TARGET_ENV}.tfvars -out=tfplan
                     terraform show -no-color tfplan > plan.txt
                     terraform show -json tfplan > plan.json
                   """
@@ -131,7 +132,8 @@ pipeline {
                   
                   sh """
                     terraform init -backend-config=backend.hcl -reconfigure
-                    terraform plan -var-file=${env.TARGET_ENV}.tfvars -out=tfplan
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform plan -var-file=envs/${env.TARGET_ENV}.tfvars -out=tfplan
                   """
                   
                   sh "terraform apply -auto-approve tfplan"
@@ -153,7 +155,8 @@ pipeline {
                   
                   sh """
                     terraform init -backend-config=backend.hcl -reconfigure
-                    terraform destroy -auto-approve -var-file=${env.TARGET_ENV}.tfvars
+                    terraform workspace select ${env.TARGET_ENV} || terraform workspace new ${env.TARGET_ENV}
+                    terraform destroy -auto-approve -var-file=envs/${env.TARGET_ENV}.tfvars
                   """
                   
                   // 如果是 PR，评论销毁结果
@@ -183,10 +186,11 @@ pipeline {
           def credId = 'aws-role-dev'
           withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
             withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-dev") {
-              dir("infra/envs/dev") {
+              dir("infra/app") {
                 sh """
                   terraform init -backend-config=backend.hcl -reconfigure
-                  terraform plan -var-file=dev.tfvars -out=tfplan
+                  terraform workspace select dev || terraform workspace new dev
+                  terraform plan -var-file=envs/dev.tfvars -out=tfplan
                 """
                 sh "terraform apply -auto-approve tfplan"
               }
@@ -205,7 +209,7 @@ pipeline {
       // 归档构建产物
       archiveArtifacts artifacts: '**/tfplan, **/plan.txt, **/plan.json', allowEmptyArchive: true
       // 清理临时文件
-      sh 'rm -f infra/envs/*/tfplan infra/envs/*/plan.txt infra/envs/*/plan.json || true'
+      sh 'rm -f infra/app/tfplan infra/app/plan.txt infra/app/plan.json || true'
     }
     success {
       echo "🎉 Pipeline 执行成功！"
@@ -270,7 +274,7 @@ def isMergeCommitToMain() {
 // 评论 Plan 结果到 PR
 def commentPlanToPR() {
   try {
-    def planContent = readFile("infra/envs/${env.TARGET_ENV}/plan.txt").trim()
+    def planContent = readFile("infra/app/plan.txt").trim()
     def comment = """
 ## 🔍 Terraform Plan - ${env.TARGET_ENV.toUpperCase()} Environment
 
