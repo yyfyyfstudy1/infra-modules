@@ -51,12 +51,17 @@ pipeline {
               echo "🎯 检测到 PR 构建（非 main 分支），执行 terraform plan"
             }
           } else {
-            // 直接推送构建
+            // 直接推送构建（非 PR）
             env.IS_PR_BUILD = 'false'
-            if (env.BRANCH_NAME == 'main') {
-              env.TARGET_ENV = 'prod'
+            // 当 Jenkins 未提供 BRANCH_NAME 时，主动判断是否在 main 上，及是否为合并提交
+            def onMain = isCommitOnMain()
+            def mergedPR = isMergeCommitToMain()
+
+            if (mergedPR || onMain) {
+              // 合并到 main 后，默认对 dev 环境执行 apply（再由人工推进到 test/prod）
+              env.TARGET_ENV = 'dev'
               env.TERRAFORM_ACTION = 'apply'
-              echo "🎯 检测到 main 分支推送，执行 terraform apply 到 prod"
+              echo "🎯 检测到合并到 main，执行 terraform apply 到 dev"
             } else {
               env.TARGET_ENV = 'dev'
               env.TERRAFORM_ACTION = 'plan'
@@ -199,6 +204,35 @@ def isPRMerged() {
     return !result.contains('not_merged')
   } catch (Exception e) {
     echo "⚠️ 检查 PR 合并状态失败: ${e.getMessage()}"
+    return false
+  }
+}
+
+// 非 PR 构建：判断当前提交是否在 origin/main 上
+def isCommitOnMain() {
+  try {
+    def status = sh(
+      script: "git branch -r --contains HEAD | grep -E 'origin/main$' >/dev/null 2>&1; echo $?",
+      returnStdout: true
+    ).trim()
+    return status == '0'
+  } catch (Exception e) {
+    echo "⚠️ 检查是否在 main 分支失败: ${e.getMessage()}"
+    return false
+  }
+}
+
+// 非 PR 构建：判断最近一次提交是否为合并 PR 的提交
+def isMergeCommitToMain() {
+  try {
+    def message = sh(
+      script: "git log -1 --pretty=%B",
+      returnStdout: true
+    ).trim()
+    // 典型合并信息：Merge pull request #<id> from <branch>
+    return message.startsWith('Merge pull request #')
+  } catch (Exception e) {
+    echo "⚠️ 检查是否为合并提交失败: ${e.getMessage()}"
     return false
   }
 }
