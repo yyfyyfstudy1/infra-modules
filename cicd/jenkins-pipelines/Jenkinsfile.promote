@@ -1,0 +1,71 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'ENV', choices: ['test', 'prod'], description: '目标环境')
+    string(name: 'SHA', defaultValue: '', description: '要发布的 commit/tag（可选）')
+    booleanParam(name: 'AUTO_APPROVE', defaultValue: true, description: 'Auto-approve apply（prod 建议人工确认）')
+  }
+
+  environment {
+    TF_IN_AUTOMATION = '1'
+    AWS_REGION       = 'ap-southeast-2'
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          if (params.SHA?.trim()) {
+            sh "git fetch --all --tags --prune"
+            sh "git checkout ${params.SHA}"
+            echo "🔖 已检出指定版本: ${params.SHA}"
+          } else {
+            echo "🔖 未指定 SHA，使用默认 SCM 版本"
+          }
+        }
+      }
+    }
+
+    stage('Promote Plan/Apply') {
+      steps {
+        script {
+          def credId = (params.ENV == 'test') ? 'aws-role-test' : 'aws-role-prod'
+          withCredentials([string(credentialsId: credId, variable: 'ROLE_ARN')]) {
+            withAWS(region: AWS_REGION, role: ROLE_ARN, roleSessionName: "jenkins-${params.ENV}") {
+              dir("infra/envs/${params.ENV}") {
+                sh """
+                  terraform init -backend-config=backend.hcl -reconfigure
+                  terraform plan -var-file=${params.ENV}.tfvars -out=tfplan
+                """
+                if (!params.AUTO_APPROVE.toBoolean() && params.ENV == 'prod') {
+                  input message: "确认 Apply 到 ${params.ENV}？", ok: 'Apply'
+                }
+                sh "terraform apply -auto-approve tfplan"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: '**/tfplan', allowEmptyArchive: true
+    }
+    success {
+      echo "✅ Promote 到 ${params.ENV} 成功"
+    }
+    failure {
+      echo "❌ Promote 失败"
+    }
+  }
+}
+
