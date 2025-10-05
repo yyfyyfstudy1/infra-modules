@@ -85,7 +85,7 @@ module "test_bucket" {
 
   source = "../modules/s3_bucket"
 
-  bucket_name        = "${local.name_prefix}-test-bucket-1"
+  bucket_name        = "${local.name_prefix}-test-bucket-mt"
   versioning_enabled = false
   force_destroy      = true
   tags               = local.common_tags
