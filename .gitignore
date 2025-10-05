@@ -33,6 +33,9 @@ terraform.rc
 dist/
 build/
 
+# 但是包含必要的部署包
+!dist/join.zip
+
 # IDE 和编辑器文件
 .vscode/
 .idea/
