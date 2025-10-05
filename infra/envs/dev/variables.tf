@@ -46,3 +46,9 @@ variable "lambda_timeout" {
   default     = 20
 }
 
+variable "enable_test_cicd_bucket" {
+  description = "是否启用 dev 环境的测试 S3 桶"
+  type        = bool
+  default     = false
+}
+

@@ -67,31 +67,22 @@ module "api_gateway" {
   tags = local.common_tags
 }
 
-# 测试用的 S3 桶 - 临时注释用于测试 GitOps 工作流
-# module "test_bucket" {
-#   source = "../../modules/s3_bucket"
-#
-#   bucket_name        = "${local.name_prefix}-test-bucket"
-#   versioning_enabled = false
-#   force_destroy      = true
-#   tags               = local.common_tags
-# }
-#
-# # CI/CD 测试用的 S3 桶
-# module "test_cicd_bucket" {
-#   source = "../../modules/s3_bucket"
-#
-#   bucket_name        = "test-cicd-${random_id.bucket_suffix.hex}"
-#   versioning_enabled = true
-#   force_destroy      = true
-#   tags = merge(local.common_tags, {
-#     Purpose = "CI/CD-Testing"
-#     CreatedBy = "Jenkins-Pipeline"
-#   })
-# }
-#
-# # 生成随机后缀确保 bucket 名称唯一
-# resource "random_id" "bucket_suffix" {
-#   byte_length = 4
-# }
+// 测试用的 S3 桶（仅在 dev 环境或显式启用时创建）
+resource "random_id" "bucket_suffix" {
+  count       = var.enable_test_cicd_bucket ? 1 : 0
+  byte_length = 4
+}
+
+module "test_cicd_bucket" {
+  count   = var.enable_test_cicd_bucket ? 1 : 0
+  source  = "../../modules/s3_bucket"
+
+  bucket_name        = "test-cicd-${random_id.bucket_suffix[0].hex}"
+  versioning_enabled = true
+  force_destroy      = true
+  tags = merge(local.common_tags, {
+    Purpose   = "CI/CD-Testing"
+    CreatedBy = "Jenkins-Pipeline"
+  })
+}
 
